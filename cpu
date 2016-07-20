@@ -1,0 +1,398 @@
+// Test Bench
+
+module testBench;
+
+	// Inputs
+	reg clk;
+	reg reset;
+	wire [7:0] im_dbus;
+	wire [7:0] dm_in_dbus;
+	wire [7:0] dm_out_dbus;
+
+	// Outputs
+	wire wr_mem;
+	wire rd_mem;
+	wire [4:0] im_abus;
+	wire [4:0] dm_abus;
+	wire [7:0] ac_out;
+	wire [7:0] alu_out;
+	wire [2:0] opcode;
+	
+	// Instantiate the Unit Under Test (UUT)
+	CPU uut (
+		.clk(clk), 
+		.reset(reset), 
+		.wr_mem(wr_mem), 
+		.rd_mem(rd_mem), 
+		.im_abus(im_abus), 
+		.im_dbus(im_dbus), 
+		.dm_abus(dm_abus), 
+		.dm_in_dbus(dm_in_dbus), 
+		.dm_out_dbus(dm_out_dbus), 
+		.ac_out(ac_out), 
+		.alu_out(alu_out), 
+		.opcode(opcode)
+			
+	);
+InstructionMemory IM(.abus(im_abus),.dbus(im_dbus));
+memoryUnit dm1(.rd(rd_mem),.wr(wr_mem),.abus(dm_abus),.in_dbus(dm_in_dbus),.out_dbus(dm_out_dbus));
+//DataMemory	dm(.rd(rd_mem),.wr(wr_mem),.abus(dm_abus),.in_dbus(dm_in_dbus),.out_dbus(dm_out_dbus));
+
+initial
+begin
+	clk=0; 	reset=1; //im_dbus=8'hxx; dm_out_dbus=8'b00000000;
+	#20 reset = 1'b0;
+	#500 $finish;
+end
+always
+#10 clk= ~clk;
+      
+endmodule
+
+// CPU
+
+module CPU
+( input clk,reset,
+output wr_mem,rd_mem,
+output [4:0] im_abus,input [7:0] im_dbus,
+  output [4:0] dm_abus,output [7:0] dm_in_dbus,
+  input [7:0] dm_out_dbus,output [7:0] ac_out,alu_out,
+  output[2:0] opcode
+    );
+
+wire ac_src,ld_ac,pc_src,jmp_uncond;
+DataPath dpu(.reset(reset),.ld_ac(ld_ac),.ac_src(ac_src),.pc_src(pc_src),.clk(clk),.opcode(opcode),.im_abus(im_abus)
+,.im_dbus(im_dbus),.dm_abus(dm_abus),.dm_in_dbus(dm_in_dbus),.ac_out(ac_out),.dm_out_dbus(dm_out_dbus),.alu_out(alu_out));
+Controller cu(.opcode(opcode),.rd_mem(rd_mem),.wr_mem(wr_mem),.ac_src(ac_src),.ld_ac(ld_ac),.pc_src(pc_src),.jmp_uncond(jmp_uncond));
+
+endmodule
+
+
+// Datapath
+
+module DataPath(
+input reset,ld_ac,ac_src,pc_src,clk,
+output [2:0] opcode,
+output [4:0] im_abus,
+input [7:0] im_dbus,
+output [4:0] dm_abus,
+output [7:0] dm_in_dbus,
+input [7:0] dm_out_dbus,
+output [7:0] ac_out,alu_out  );
+
+//wire[7:0] ac_out,alu_out,mux2_out;
+wire[7:0] mux2_out;
+wire [4:0] pc_out,adder_out,mux1_out;
+
+ProgramCounter pc(.d_in(mux1_out),.reset(reset),.clk(clk),.d_out(pc_out));//instantiation of all modules
+CounterIncrement adder(.a(pc_out),.b(5'b00001),.adder_out(adder_out));
+Mux2to1_6Bit mux1(.i0(adder_out),.i1(im_dbus[4:0]),.sel(pc_src),.mux_out(mux1_out));
+Accumulator ac(.d_in(mux2_out),.load(ld_ac),.clk(clk),.d_out(ac_out));
+ALU alu(.a(ac_out),.b(dm_out_dbus),.opcode(opcode),.alu_out(alu_out));
+Mux2to1_8Bit mux2(.i0(alu_out),.i1(dm_out_dbus),.sel(ac_src),.mux_out(mux2_out));
+
+assign im_abus = pc_out;				//assign im_abus=6'b000000;
+assign opcode = im_dbus[7:5];
+assign dm_abus = im_dbus[4:0];	//abus for DataMemory.
+assign dm_in_dbus = ac_out;
+
+endmodule
+
+// Program Counter
+
+module ProgramCounter(
+input[4:0]d_in,
+input reset,clk,
+output reg[4:0]d_out
+    );
+always@(posedge clk)
+if(reset)
+d_out<=5'b00000;
+else
+d_out<=d_in;
+
+endmodule
+
+// Adder
+
+module CounterIncrement(
+input[4:0]a,input[4:0]b,
+output[4:0]adder_out
+    );
+assign adder_out=a+b;
+
+endmodule
+
+// mux2to1(6-bit)
+
+module Mux2to1_6Bit(
+input[4:0]i0,i1,input sel,
+output[4:0]mux_out
+    );
+	 assign mux_out=sel?i1:i0;
+
+endmodule
+
+// mux2to1(8-bit)
+
+module Mux2to1_8Bit(
+    input[7:0]i0,i1,input sel,
+output[7:0]mux_out
+    );
+	 
+	 assign mux_out=sel?i1:i0;
+endmodule
+
+// Accumulator
+
+module Accumulator(
+input [7:0] d_in,
+input load,clk,
+output reg [7:0] d_out
+    );
+
+always @(posedge clk)
+if(load)
+d_out<=d_in;
+initial d_out<=8'h00;
+
+endmodule
+
+// ALU
+
+module ALU(
+input[7:0]a,input[7:0]b,input[2:0]opcode,
+output reg[7:0]alu_out
+    );
+always@(opcode,a,b)
+case(opcode)
+3'b000:alu_out=a+b;
+3'b001:alu_out=a-b;
+3'b010:alu_out=a&b;
+3'b011:alu_out=a|b;
+3'b100:alu_out=~b;
+3'b101:alu_out=a^b;
+3'b110:alu_out=a^~b;
+default:alu_out=0;
+endcase
+
+endmodule
+
+
+// Controller
+
+module Controller(
+input[2:0]opcode,
+output reg rd_mem,wr_mem,ac_src,ld_ac,pc_src,jmp_uncond
+    );
+always@(opcode)
+begin
+rd_mem=1'b0;
+wr_mem=1'b0;
+ac_src=1'b0;
+pc_src=1'b0;
+ld_ac=1'b0;
+jmp_uncond=1'b0;
+
+case(opcode)
+3'b000:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b001:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b010:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b011:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b100:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b101:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b110:
+begin
+rd_mem=1'b1;
+wr_mem=1'b0;
+ld_ac=1'b1;
+ac_src=1'b0;
+end
+3'b111:
+begin
+rd_mem=1'b0;
+wr_mem=1'b0;
+ld_ac=1'b0;
+ac_src=1'b0;
+pc_src=1'b1;
+jmp_uncond=1'b1;
+end
+default:
+begin
+rd_mem=1'b0;
+wr_mem=1'b0;
+ld_ac=1'b0;
+ac_src=1'b0;
+pc_src=1'b0;
+
+end
+endcase
+end
+endmodule
+
+// Instruction Memory
+
+module InstructionMemory(input[4:0] abus,output reg[7:0] dbus);
+reg [7:0]im_array[0:12];
+always @(abus)
+dbus=im_array[abus];
+initial 
+begin
+im_array[0]=8'h00;
+im_array[1]=8'h21;
+im_array[2]=8'h42;
+im_array[3]=8'h63;
+im_array[4]=8'h84;
+im_array[5]=8'hA4;
+im_array[6]=8'hC4;
+im_array[7]=8'hEA;
+im_array[10]=8'h00;
+im_array[11]=8'hE0;
+end 
+endmodule
+
+// Memory Unit
+
+module memoryUnit(
+  input rd,wr,clk,
+input [4:0] abus,
+input [7:0] in_dbus,
+output wire [7:0] out_dbus,output check);
+wire [7:0]dm_dbus;
+wire [1:0] compareword;
+wire [1:0] tag;
+wire [2:0] index;
+
+compare comp(compareword,tag ,rd,rd_cache,rd_mem);
+DataMemory dm(rd_mem,wr,abus,in_dbus,dm_dbus);
+cache cache(rd_cache,index,tag,dm_dbus,out_dbus);
+
+assign index=abus[2:0];
+assign tag=abus[4:3];
+assign compareword= cache.word[index][9:8];
+
+endmodule
+
+
+// compare unit
+
+module compare(input [1:0] tag,input [1:0]cache,input rd,output reg rd_cache,output reg rd_mem
+    );
+
+always@(tag,rd)
+begin
+if(rd)
+begin
+if(tag==cache)
+begin
+rd_cache=1'b1;
+rd_mem=1'b0;
+end
+else
+begin
+rd_cache=1'b0;
+rd_mem=1'b1;
+end
+end
+else
+begin
+rd_cache=1'b0;
+rd_mem=1'b0;
+end
+end
+endmodule
+
+
+// Data Memory
+
+module DataMemory(
+input rd,wr,
+input [4:0] abus,
+input [7:0] in_dbus,
+output reg [7:0] out_dbus );
+reg[7:0] dm_array [0:31];
+   
+
+always @(rd,abus)
+begin
+if(rd)
+
+ out_dbus=dm_array[abus];
+end
+
+always @(wr,in_dbus)
+begin
+if(wr)
+dm_array[abus]=in_dbus;
+end
+initial 
+begin
+dm_array[0]=8'h01;
+dm_array[1]=8'h02;
+dm_array[2]=8'h03;
+dm_array[3]=8'h04;
+dm_array[4]=8'h05;
+end
+endmodule
+
+
+// Cache
+
+module cache(
+input rd_cache,  input [2:0] index,
+input [1:0] tag,
+input [7:0] dm_dbus,
+output reg [7:0] out);
+reg[9:0] word [0:7];
+
+always @(rd_cache,tag,index)
+begin
+if(rd_cache==1)
+begin
+out <= word[index][7:0];
+
+end 
+else if(rd_cache==0)
+begin
+#0 word[index][7:0]<=dm_dbus;
+word[index][9:8]<=tag;
+assign out= dm_dbus;
+end
+end
+endmodule
